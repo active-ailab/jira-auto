@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jira-auto-service"
+version = "0.1.0"
+description = "Local Jira bug preparation service and MCP plugin"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+    "mcp>=1.20,<2",
+    "python-multipart>=0.0.20",
+    "pydantic>=2.10,<3",
+    "lark-oapi>=1.6,<2",
+    "pyelftools>=0.32,<1",
+    "pillow>=12,<14",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "httpx>=0.28,<1"]
+
+[project.scripts]
+jira-auto = "jira_service.app:main"
+jira-auto-mcp = "jira_service.mcp_server:main"
+
+[tool.setuptools.package-data]
+jira_service = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["jira_service*"]

@@ -1,0 +1,57 @@
+# Local environments and build products
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+node_modules/
+build/
+dist/
+outputs/
+# Private runtime, user settings and generated local paths
+.env
+.env.*
+!.env.example
+service.env
+*.generated.json
+data/
+backups/
+private/
+.netrc
+.netrc.*
+.ssh/
+.codex/
+.elf-fetch/
+.jira/
+config.local.*
+# Credentials, sessions and databases
+feishu.json
+quality-auth.json
+auth.json
+auth-token
+credentials*
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite*
+*.db
+*.db-*
+# User attachments, forensic outputs, downloaded binaries and release archives
+*.log
+*.dump
+*.bin
+*.elf
+*.map
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.vsix
+*.png
+*.jpg
+*.jpeg
+*.webp
+.DS_Store

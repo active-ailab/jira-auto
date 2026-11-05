@@ -1,0 +1,7 @@
+interface:
+  display_name: "Zepp Jira 问题分析"
+  short_description: "收集质量平台日志并归档 Jira，结合固件日志、截图和现场生成可审批分析"
+  default_prompt: "使用 $zepp-jira-triage 处理这单 Jira，先收集并归档质量日志，再结合版本、调用栈和源码分析，提交我审批。"
+
+policy:
+  allow_implicit_invocation: true

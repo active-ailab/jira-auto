@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Jira Auto · 问题分析工作台</title><link rel="stylesheet" href="/static/style.css"><script defer src="/static/review.js"></script><script defer src="/static/app.js"></script></head>
+<body>
+<aside class="sidebar">
+  <a href="/" class="brand"><span class="brand-mark">j<span>·</span></span><span>Jira Auto<small>PERSONAL ENGINEERING DESK</small></span></a>
+  <div class="workspace"><span class="avatar">韩</span><div>个人工作空间<small>本地服务 · 人工审批</small></div><span class="live-dot"></span></div>
+  <div class="nav-label">工作台</div>
+  <nav><button class="nav" data-view="focus"><span>◷</span>今日优先处理</button><button class="nav active" data-view="overview"><span>◫</span>问题总览</button><button class="nav" data-view="reviews"><span>✓</span>草稿与审批 <b id="review-count">0</b></button><button class="nav" data-view="activity"><span>↗</span>执行记录</button><button class="nav" data-view="integrations"><span>⌘</span>接入与配置</button></nav>
+  <div class="sidebar-note"><span class="live-dot"></span><strong>本地服务</strong><p>CLI 获取事实，分析保留证据。<br>审批后才能回写 Jira。</p><span class="version">MVP 0.1 / LOCAL</span></div>
+</aside>
+<main>
+  <header><div class="breadcrumb">工作空间 <span>/</span> <b id="crumb">问题总览</b></div><div class="header-right"><span class="local-pill">● 仅本机访问</span><span id="clock"></span></div></header>
+  <section class="page-heading"><div><div class="eyebrow">YOUR BUG TRIAGE, IN ONE PLACE</div><h1 id="page-title">让问题，走向结论<span>。</span></h1><p id="page-subtitle">从工单与日志开始，连接版本、源码和每一条分析证据。</p></div><div class="heading-actions"><button class="button secondary" id="add-issue">＋ 加入分析列表</button><button class="button primary" id="sync">↻ 同步 Jira</button></div></section>
+  <div id="error" role="alert" hidden></div><div id="toast" role="status" hidden></div>
+  <section id="content" aria-live="polite"><div class="empty">正在连接本地服务…</div></section>
+  <footer><span>JIRA AUTO / ENGINEERING WORKBENCH</span><span id="poll-note">正在获取服务状态</span></footer>
+</main>
+<dialog id="import-dialog"><form id="import-form"><div class="dialog-head"><h2>加入分析列表</h2><button type="button" class="icon-button" id="close-import">×</button></div><p>可指定任意有权访问的 Jira 工单，不限于分配给你的工单。加入后自动读取工单、下载支持的附件并分析；质量平台日志仍可手动导入。</p><label for="issue-key">Jira 工单号或链接</label><input id="issue-key" placeholder="ABS-9001 或 https://jira.huami.com/browse/ABS-9001" required><div class="dialog-actions"><button class="button primary">加入并查看工单</button></div></form></dialog>
+<dialog id="detail-dialog"><div id="detail"></div></dialog>
+<dialog id="run-dialog"><div class="detail-head"><div><div class="eyebrow">LIVE EXECUTION TRACE</div><h2 id="run-title">执行过程</h2></div><button class="icon-button" id="close-run" aria-label="关闭执行过程">×</button></div><div class="detail-body"><div id="run-status"></div><p id="run-connection" class="small-note">正在连接执行器…</p><div class="notice" id="run-scope">展示真实执行步骤、工具输出和证据摘要。材料预检不等于模型根因分析。</div><div id="run-stages" class="pipeline-stages"></div><div class="run-metrics"><span id="run-current">等待任务信息</span><span id="run-elapsed"></span></div><progress id="run-progress" max="100" aria-label="当前步骤进度"></progress><div class="trace-toolbar"><strong>步骤与证据</strong><label><input type="checkbox" id="run-autoscroll" checked> 自动滚动</label></div><div id="run-trace" role="log" aria-live="polite"></div><div id="run-error" class="error-text"></div><div id="run-result"></div><div id="run-next"></div></div></dialog>
+</body></html>

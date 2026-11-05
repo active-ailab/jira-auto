@@ -1,0 +1,10 @@
+{
+  "name": "jira-auto-local",
+  "interface": {"displayName": "Jira Auto Local"},
+  "plugins": [{
+    "name": "jira-auto",
+    "source": {"source": "local", "path": "./plugin"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Productivity"
+  }]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "jira-auto",
+  "version": "0.1.0",
+  "description": "Inspect local Jira bug evidence, prepare version artifacts, and save analysis drafts for human review.",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Jira Auto",
+        "shortDescription": "本地 Jira 问题分析与证据工作台",
+        "longDescription": "通过本机服务与 Zepp Jira 分析技能，收集质量反馈材料、归档 Jira 附件、核对日志/版本/现场和源码，保存分析草稿。审批由用户在飞书或 Dashboard 完成，批准后服务发布准确评论。",
+        "developerName": "Jira Auto",
+        "category": "Productivity",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "defaultPrompt": [
+          "查看我名下需要分析的 Bug",
+          "分析 COLOGNE-9001 的日志证据并保存草稿，等待我审批"
+        ]
+      }
+    }
+  }
+}

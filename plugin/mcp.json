@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "jira-auto": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--no-project", "--with", "mcp==1.30.0", "python", "${PLUGIN_ROOT}/bridge.py"]
+    }
+  }
+}
