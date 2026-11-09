@@ -50,10 +50,11 @@ def inspect_elf(path):
             "build_id": build_id[1] if build_id else None, "sha256": sha256(path)}
 
 
-# Verified CI naming: the quality platform reports GenevaW; build 125391 is Geneva.
+# Verified CI naming: GenevaW and GenevaWN use Geneva build 125391 (3.25.0.1).
+# GenevaWN's associated dump matches the candidate ELF's main .text bytes.
 # This alias selects artifacts only. Scene/version/code-byte checks still apply.
 def build_device(device):
-    return {'GenevaW':'Geneva'}.get(device,device)
+    return {'GenevaW':'Geneva','GenevaWN':'Geneva'}.get(device,device)
 
 
 def fetch_artifacts(settings, store, key, device, version, run_id):

@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from .integrations import run_cli
 from .coredump import decode_coredump
 
-PARSER_VERSION='scenes-5-ci-roots-register-prefix'
+PARSER_VERSION='scenes-6-nested-dump-time'
 TZ=timezone(timedelta(hours=8))
 CORE=re.compile(r'malloc failed|ERROR!!!|Assert on thread|Fault on thread|Firmware name:|\b(?:RA|PC|MTVAL|MEPC|MCAUSE|SP|LR|CFSR|HFSR|BFAR|MMFAR)\s*[:=]?\s*0x|run:\s*addr2line|call\s*stack:|backtrace:|watchdog.*(?:timeout|expired|trigger)|\bHardFault\b|\bpanic\b',re.I)
 BOOT=re.compile(r'Welcome to HuamiOS|RAMDUMP\s+sys_init.*vfs register|SYS_INIT.*reset reason\s*\{',re.I)
@@ -87,9 +87,16 @@ def extract_scenes(text, filename, artifact_id):
 
 
 def dump_timestamp(name):
-    match=re.search(r'(20\d{12})',name)
-    if not match:return None
-    try:return datetime.strptime(match[1],'%Y%m%d%H%M%S').replace(tzinfo=TZ)
+    # Archive lineage is outer.zip / ... / dump_TIMESTAMP.zip / dump.bin.
+    # The outer device package can carry a different, equally valid date.
+    parts=re.split(r'[/\\]',name)
+    dated=[p for p in parts if re.search(r'(?<!\d)20\d{12}(?!\d)',p)]
+    dump_parts=[p for p in dated if re.search(r'(?:sram|psram\d*|ram)?_?dump',p,re.I)]
+    if not dated:return None
+    candidate=(dump_parts or dated)[-1]
+    stamps=set(re.findall(r'(?<!\d)(20\d{12})(?!\d)',candidate))
+    if len(stamps)!=1:return None
+    try:return datetime.strptime(stamps.pop(),'%Y%m%d%H%M%S').replace(tzinfo=TZ)
     except ValueError:return None
 
 

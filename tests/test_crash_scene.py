@@ -95,6 +95,19 @@ def test_jenkins_hs3_workspace_paths_resolve_with_manifest_scoped_relative_names
     assert source_relative('/home/jenkins/HuamiOS_HS3@13/../../etc/passwd') is None
 
 
+def test_nested_dump_time_beats_dated_outer_device_archive():
+    from jira_service.crash_scene import select_scene, dump_timestamp
+    scenes=[{'id':'old','timestamp':'2026-10-29T03:01:00+08:00','firmware':'1.2.3'},
+            {'id':'latest','timestamp':'2026-10-30T05:07:14+08:00','firmware':'1.2.3'}]
+    path='device-20261029030105.zip / log/ramdump/sram_dump_20261030050718.zip / sram_dump.bin'
+    dumps=[{'id':'sram','metadata':{'original_path':path}}]
+    assert select_scene(scenes,dumps,{'firmware':'1.2.3'})['scene_id']=='latest'
+    assert scenes[0]['dump_association']['status']=='unverified'
+    assert dump_timestamp('dump_20261030050718_20261030050818.zip') is None
+    assert dump_timestamp('dump_20261330050718.zip') is None
+    assert dump_timestamp('device-123202610300507189.zip') is None
+
+
 def test_compact_business_stack_does_not_promote_unverified_rtos_gpu_candidates():
     from jira_service.crash_scene import scene_text
     def frame(name,path):return {'inline':[{'function':name,'file':'/ci/HuamiOS_HS3@2/'+path,'line':1}]}

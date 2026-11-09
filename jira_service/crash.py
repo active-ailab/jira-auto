@@ -76,7 +76,7 @@ def prepare_crash(settings, store, key, run_id, inventory=None):
     matches=[]
     # Geneva layout is supported only when the SRAM-resident descriptor validates both file lengths.
     # No assumption that another device uses this layout.
-    if issue['device'] in ('Geneva','GenevaW'):
+    if issue['device'] in ('Geneva','GenevaW','GenevaWN'):
         sram=next((path(a) for a in dumps if re.search(r'(?:^|/)sram_dump',a['metadata'].get('original_path',''))),None)
         psram=next((path(a) for a in dumps if re.search(r'(?:^|/)psram_dump',a['metadata'].get('original_path',''))),None)
         if sram and psram:

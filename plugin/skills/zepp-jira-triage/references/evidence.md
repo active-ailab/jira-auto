@@ -17,7 +17,9 @@ iOS 日志可能为“反馈包 → iOS_DeviceLog → 设备 ZIP → dump ZIP �
 
 ## 版本、符号与源码
 
-使用现有服务的 elf-fetch 集成，不重复输入凭据。崩溃需要 XML/ELF/MAP；只核对重启类型/按键路径时可先只取 XML。已验证 `GenevaW → CI Geneva` 的命名映射，保留工单原机型字段；这不是所有 `W` 后缀都能去掉的规则。
+使用现有服务的 elf-fetch 集成，不重复输入凭据。崩溃需要 XML/ELF/MAP；只核对重启类型/按键路径时可先只取 XML。已验证 `GenevaW/GenevaWN → CI Geneva` 的命名映射，保留工单原机型字段；GenevaWN 还通过了对应版本主 `.text` 与关联 dump 的逐字节核对，其他代码段仍单独记录匹配状态。这不是所有后缀都能去掉的规则。
+
+嵌套附件路径可能同时包含外层设备包时间与内层 `sram_dump/psram_dump_TIMESTAMP.zip` 时间。现场关联优先取实际 dump 包的时间，不取整条路径中第一个日期；多时间或不合法日期不猜。自动选择仍须唯一时间窗口与版本核对，不能把工具修正伪装为用户手动选择。
 
 `manifest.xml` 锁定项目和 revision，再 `git show revision:path` 只读取源码；缺对象时按现有只读 fetch 路径获取。Jenkins 调试路径可能来自 `HuamiOS_multi_platform` 或 `HuamiOS_HS3@N/build/../...`，使用现有路径解析器映射到 manifest 项目，不凭本地 HEAD 冒充目标版本。
 

@@ -113,7 +113,8 @@ def test_queue_cancel_api_and_cross_kind_analysis_guard(tmp_path):
         assert client.post('/api/issues/'+i['key']+'/jobs',json={'kind':'preflight'},headers=headers).status_code==200
 
 
-def test_verified_quality_device_alias_selects_ci_artifacts_without_changing_issue_device(tmp_path,monkeypatch):
+@pytest.mark.parametrize('device',['GenevaW','GenevaWN'])
+def test_verified_quality_device_alias_selects_ci_artifacts_without_changing_issue_device(tmp_path,monkeypatch,device):
     from types import SimpleNamespace
     from jira_service.materials import fetch_artifacts,sha256
     store=Store(tmp_path);calls=[]
@@ -125,6 +126,6 @@ def test_verified_quality_device_alias_selects_ci_artifacts_without_changing_iss
         return ''
     monkeypatch.setattr('jira_service.materials.run_cli',fetch)
     monkeypatch.setattr('jira_service.materials.inspect_elf',lambda p:{'sha256':sha256(p),'architecture':'fixture'})
-    result=fetch_artifacts(SimpleNamespace(data=tmp_path,elf_bin='fake'),store,'ABS-1','GenevaW','3.25.0.1',None)
+    result=fetch_artifacts(SimpleNamespace(data=tmp_path,elf_bin='fake'),store,'ABS-1',device,'3.25.0.1',None)
     assert calls[0][calls[0].index('--device')+1]=='Geneva'
-    assert all(x['device']=='GenevaW' and x['build_device']=='Geneva' for x in result['files'])
+    assert all(x['device']==device and x['build_device']=='Geneva' for x in result['files'])
