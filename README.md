@@ -141,7 +141,7 @@ git diff --check
 python3 scripts/check_public_files.py
 ```
 
-doctor 不发布评论或上传附件，也不进行真实模型调用。发布前回归基线为 193 项测试通过；目标 Windows/WSL 的防火墙、企业 VPN、任务计划和实际账号闭环需要在目标机验收。
+doctor 不发布评论或上传附件，也不进行真实模型调用。发布前回归基线为 209 项测试通过；目标 Windows/WSL 的防火墙、企业 VPN、任务计划和实际账号闭环需要在目标机验收。
 
 [架构与流程](docs/架构与流程.md) 说明证据边界、审批版本、发布结果核对、队列恢复和每日推荐策略；[AGENTS.md](AGENTS.md) 包含维护约束。
 

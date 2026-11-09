@@ -78,6 +78,56 @@ def test_unapproved_storage_url_never_requested(url):
     with pytest.raises(q.QualityError):q.validate_download_url(url)
 
 
+@pytest.mark.parametrize('url',[
+    'https://s3.eu-central-1.amazonaws.com/huami-de/example.zip?signature=synthetic',
+    'https://s3.eu-central-1.amazonaws.com:443/huami-de/log/example.zip',
+])
+def test_authenticated_platform_europe_s3_bucket_is_supported(url):
+    q.validate_download_url(url)
+
+
+@pytest.mark.parametrize('url',[
+    'https://s3.eu-central-1.amazonaws.com/another-bucket/example.zip',
+    'https://s3.eu-central-1.amazonaws.com/huami-de-evil/example.zip',
+    'https://s3.eu-central-1.amazonaws.com/huami-de',
+    'https://s3.eu-central-1.amazonaws.com/huami-de/',
+    'https://s3.eu-central-1.amazonaws.com/huami-de/../other/example.zip',
+    'https://s3.eu-central-1.amazonaws.com/huami-de/%2e%2e/other/example.zip',
+    'https://s3.eu-central-1.amazonaws.com/huami-de/a%2f..%2fother.zip',
+    'https://s3.eu-central-1.amazonaws.com/huami-de/a%5cother.zip',
+    'https://s3.eu-central-1.amazonaws.com.evil.example/huami-de/example.zip',
+    'http://s3.eu-central-1.amazonaws.com/huami-de/example.zip',
+    'https://user:pass@s3.eu-central-1.amazonaws.com/huami-de/example.zip',
+    'https://s3.eu-central-1.amazonaws.com:8080/huami-de/example.zip',
+])
+def test_s3_approval_does_not_allow_other_buckets_or_ambiguous_paths(url):
+    with pytest.raises(q.QualityError):q.validate_download_url(url)
+
+
+def test_mixed_storage_list_is_rejected_before_any_download(tmp_path,monkeypatch):
+    s=service(tmp_path)
+    files=[{'filename':'one.zip','url':'https://s3.eu-central-1.amazonaws.com/huami-de/one.zip','role':'url'},
+           {'filename':'two.zip','url':'https://s3.eu-central-1.amazonaws.com/other/two.zip?signature=do-not-log','role':'url'}]
+    monkeypatch.setattr(q,'feedback_files',lambda *a:(files,{'files':2}))
+    monkeypatch.setattr(q,'response',lambda *a,**kw:pytest.fail('unsupported list must not download any member'))
+    with pytest.raises(q.QualityError) as exc:q.collect(s,'ABS-1','run')
+    assert exc.value.state=='unsupported_host'
+    assert 's3.eu-central-1.amazonaws.com' in str(exc.value)
+    assert 'do-not-log' not in str(exc.value)
+
+
+def test_europe_storage_download_never_receives_sso_credentials(tmp_path,monkeypatch):
+    s=service(tmp_path);calls=[]
+    monkeypatch.setattr(q,'feedback_files',lambda *a:([{'filename':'device.zip','url':'https://s3.eu-central-1.amazonaws.com/huami-de/test.zip','role':'url'}],{'files':1}))
+    def download(url,headers=None):
+        assert headers is None
+        calls.append(url)
+        return Download(package())
+    monkeypatch.setattr(q,'response',download)
+    result=q.collect(s,'ABS-1','run',archive_only=True)
+    assert result['state']=='downloaded' and len(calls)==1
+
+
 class Download(io.BytesIO):
     def __init__(self,blob,expected=None):
         super().__init__(blob);self.headers={'Content-Length':str(len(blob) if expected is None else expected)}

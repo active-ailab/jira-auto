@@ -9,7 +9,7 @@ import secrets
 import time
 from urllib.error import HTTPError,URLError
 from http.client import HTTPException
-from urllib.parse import urlencode,urlparse
+from urllib.parse import urlencode,urlparse,unquote
 from urllib.request import Request,build_opener,HTTPRedirectHandler
 import zipfile
 from .materials import sha256
@@ -17,6 +17,9 @@ from .store import now
 
 # Storage buckets observed on authenticated production feedback; expand only after verifying a new origin.
 STORAGE_HOSTS={'zepp-us3-1311088246.cos.na-ashburn.myqcloud.com','zepp-cn3-1311088246.cos.ap-guangzhou.myqcloud.com'}
+# Path-style S3 endpoints serve many unrelated tenants: approve the bucket too.
+# Observed in the authenticated quality-platform download response, not user text.
+S3_PATH_BUCKETS={'s3.eu-central-1.amazonaws.com':{'huami-de'}}
 API='https://api.zepp.top'
 AUTH='https://open.zepp.top/auth'
 
@@ -136,8 +139,16 @@ def validate_download_url(url):
     try:
         parsed=urlparse(url);host=(parsed.hostname or '').lower();port=parsed.port
     except ValueError:raise QualityError('unsupported_host','日志地址格式无效') from None
-    if parsed.scheme!='https' or parsed.username or parsed.password or port not in (None,443) or not (host in STORAGE_HOSTS or any(host==d or host.endswith('.'+d) for d in ('zepp.top','zepp.com','huami.com'))):
-        raise QualityError('unsupported_host','平台返回了未支持的日志存储地址，未向该地址发送请求')
+    segments=unquote(parsed.path).split('/')
+    s3_allowed=(host in S3_PATH_BUCKETS and len(segments)>2 and
+                parsed.path.split('/')[1] in S3_PATH_BUCKETS[host] and
+                segments[1] in S3_PATH_BUCKETS[host] and
+                not any(part in ('.','..') for part in segments) and
+                '\\' not in unquote(parsed.path) and bool('/'.join(segments[2:])))
+    allowed=(host in STORAGE_HOSTS or s3_allowed or any(host==d or host.endswith('.'+d) for d in ('zepp.top','zepp.com','huami.com')))
+    if parsed.scheme!='https' or parsed.username or parsed.password or port not in (None,443) or not allowed:
+        safe_host=re.sub(r'[^A-Za-z0-9.-]','?',host)[:150] or '无有效主机'
+        raise QualityError('unsupported_host',f'平台返回了未支持的日志存储位置（主机：{safe_host}），未向该地址发送请求')
 
 
 def collect(service,key,rid,archive_only=False):
@@ -161,6 +172,8 @@ def collect(service,key,rid,archive_only=False):
         mark('listing','正在查询质量平台反馈及原始日志清单')
         try:
             files,metadata=feedback_files(settings,feedback)
+            # Reject unsupported later members before downloading any earlier one.
+            for item in files:validate_download_url(item['url'])
             directory=settings.data/'cases'/key/'quality'/'background';directory.mkdir(parents=True,exist_ok=True)
             path=directory/('quality_'+feedback['id']+'.zip');temporary=path.with_suffix('.zip.part');total=0
             try:
