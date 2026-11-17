@@ -142,3 +142,27 @@ def test_issue_list_distinguishes_failed_execution_preflight_and_reviewable_resu
             listed=client.get('/api/issues').json()['issues'][0]
             assert listed['analysis_state']==state and listed['reviewable'] is reviewable
             assert listed['report_kind']==kind and listed['report_status']=='draft'
+
+
+def test_review_html_uses_supported_call_path_and_separates_cause_sections():
+    import subprocess
+    from pathlib import Path
+    r=report({'result':{},'crash_scenes':[{'filename':'fw.log','raw_logs':[],
+       'code_call_path':{'functions':['fault_fn','caller_fn']},
+       'frames':[{'index':0,'address':'0x100','inline':[{'function':'fault_fn'}]},
+                 {'index':1,'address':'0x200','inline':[{'function':'unrelated_logger','relative_file':'framework/log.c'}]}]}]})
+    r['fingerprint']='fp';view=projection(r)
+    detail={'selected_report':r,'reports':[r],'report_history':[r],'latest_report_id':r['id'],
+            'issue':{'key':'ABS-1','fingerprint':'fp'},'review':view}
+    script="""const fs=require('fs'),vm=require('vm');
+const data=JSON.parse(fs.readFileSync(0,'utf8'));
+const scope={E:x=>String(x??''),badge:x=>x,fmt:x=>x,labels:{},JSON};vm.createContext(scope);
+vm.runInContext(fs.readFileSync('jira_service/static/review.js','utf8'),scope);
+process.stdout.write(scope.reviewMarkup(data,{}));"""
+    html=subprocess.run(['node','-e',script],input=json.dumps(detail),text=True,capture_output=True,check=True).stdout
+    titles=['核心现场','代码调用关系','源码与数值依据','直接原因','未确认诱因与验证','评论与审批']
+    positions=[html.index('<h3>'+title+'</h3>') for title in titles]
+    assert positions==sorted(positions)
+    path=html.split('class="review-callpath">',1)[1].split('</div>',1)[0]
+    assert path.index('caller_fn')<path.index('fault_fn') and 'unrelated_logger' not in path
+    assert 'exact saved comment' in html and r['body']=='exact saved comment'

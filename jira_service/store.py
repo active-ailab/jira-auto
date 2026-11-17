@@ -154,12 +154,25 @@ class Store:
 
     def recover(self):
         with self.db() as c:
+            # Older workers classified a completed scene inventory's selection gate as failure.
+            for row in c.execute("SELECT r.id,r.error,s.result FROM runs r JOIN run_stages s ON s.run_id=r.id AND s.name='scene_inventory' WHERE r.status='failed' AND s.status='completed'").fetchall():
+                try:
+                    inventory=json.loads(row['result'])['value'];selection=inventory['selection']
+                    if selection['status']!='needs_selection' or row['error']!=selection['reason']:continue
+                    result={'selection':selection,'scene_ids':[s['id'] for s in inventory['scenes']]}
+                except (ValueError,KeyError,TypeError):continue
+                c.execute("UPDATE runs SET status='needs_selection',error=NULL,result=? WHERE id=?",(json.dumps(result,ensure_ascii=False),row['id']))
             # Fetch/import jobs may have partial files. Make interruptions visible; retry is explicit.
             c.execute("UPDATE runs SET status='interrupted',error='服务重启，任务中断，可手动重试',updated=? WHERE status='running'", (now(),))
             c.execute("UPDATE run_stages SET status='interrupted',error='服务重启；已完成阶段仍可复用',updated=? WHERE status='running'", (now(),))
             # External writes are never retried after an uncertain result.
             c.execute("UPDATE reports SET status='publication_unknown' WHERE status='publishing'")
             c.execute("UPDATE daily_focus SET state='delivery_unknown',updated=? WHERE state='sending'",(now(),))
+
+    def wait_for_selection(self,rid,result):
+        with self.db() as c:
+            c.execute("UPDATE runs SET status='needs_selection',result=?,error=NULL,updated=? WHERE id=?",
+                      (json.dumps(result,ensure_ascii=False),now(),rid))
 
     def artifact(self, issue, kind, path, metadata):
         resolved = Path(path).resolve()

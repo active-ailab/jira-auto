@@ -59,6 +59,43 @@ def test_retry_api_does_not_allow_publication_or_active_run(tmp_path):
         assert client.post('/api/runs/'+new['id']+'/retry',json={},headers=headers).status_code==400
 
 
+def test_worker_scene_selection_wait_is_not_failure_or_approvable_report(tmp_path,monkeypatch):
+    import time
+    from jira_service.crash_scene import NeedsSceneSelection
+    service=Service(Settings(tmp_path/'data',tmp_path/'source'))
+    service.last_poll=service.last_quality_retry=time.monotonic()
+    monkeypatch.setattr(service,'maintain_feishu',lambda:None)
+    rid=service.store.enqueue('analysis','ABS-1')
+    selection={'status':'needs_selection','scene_id':None,'reason':'请选择本轮现场'}
+    def prepare(*args,**kwargs):
+        service.stop.set()
+        raise NeedsSceneSelection(selection,['one','two'])
+    monkeypatch.setattr('jira_service.pipeline.prepare',prepare)
+    service.work()
+    run=service.store.rows('SELECT * FROM runs WHERE id=?',(rid,))[0]
+    assert run['status']=='needs_selection' and run['error'] is None
+    assert json.loads(run['result'])['scene_ids']==['one','two']
+    assert service.store.rows('SELECT * FROM reports')==[]
+    assert not service.store.rows("SELECT * FROM events WHERE run_id=? AND step='failed'",(rid,))
+    assert service.store.rows('SELECT status FROM runs WHERE id=?',(service.retry(rid),))[0]['status']=='queued'
+
+
+def test_recover_reclassifies_only_legacy_selection_gate(tmp_path):
+    store=Store(tmp_path)
+    reason='多个现场或缺少唯一的dump时间关联，请在看板选择现场'
+    selection={'status':'needs_selection','scene_id':None,'reason':reason}
+    ids=[]
+    for key,error in [('ABS-1',reason),('ABS-2','工具执行失败')]:
+        rid=store.enqueue('analysis',key);ids.append(rid)
+        StageRunner(store,key,rid).run('scene_inventory',{},lambda:{'selection':selection,'scenes':[{'id':'one'}]})
+        store.finish(rid,error=error)
+    store.recover()
+    old=store.rows('SELECT status,error,result FROM runs WHERE id=?',(ids[0],))[0]
+    assert old['status']=='needs_selection' and old['error'] is None
+    assert json.loads(old['result'])['scene_ids']==['one']
+    assert store.rows('SELECT status FROM runs WHERE id=?',(ids[1],))[0]['status']=='failed'
+
+
 def test_corrupt_build_cache_is_quarantined_before_fetch(tmp_path,monkeypatch):
     from types import SimpleNamespace
     import hashlib

@@ -27,6 +27,7 @@ def test_fault_stack_accepts_hex_prefix_but_not_unrelated_backtrace():
 def test_jenkins_build_path_normalizes_to_manifest_project():
     assert source_relative('/home/jenkins/HuamiOS_multi_platform/build/..//./framework/map/src/a.c')=='framework/map/src/a.c'
     assert source_relative('/home/jenkins/FW_ALGO_PACKAGE_BUILD/storyboard/a.c') is None
+    assert source_relative('/home/jenkins/workspace/firmware_auto_trigger/HuamiOS_multi_platform@2/build/../3rdparty/opus/silk/shell_coder.c')=='3rdparty/opus/silk/shell_coder.c'
 
 
 def test_comment_starts_with_scene_and_keeps_full_frames_for_dashboard():
@@ -35,7 +36,7 @@ def test_comment_starts_with_scene_and_keeps_full_frames_for_dashboard():
     scene['frames']=[{'index':0,'address':'0x7028cc08','inline':[{'function':'createAtlas','file':'map.c','line':10}]}]
     result=AnalysisResult(verdict='probable',confidence='medium',summary='地图画布分配失败触发abort',root_cause='分配失败触发abort',facts=[],hypotheses=[],gaps=['具体分配失败诱因待核实'],next_steps=[],review_notes=[])
     text=render_comment(result,EvidencePool(),[scene])
-    assert text.index('malloc failed') < text.index('createAtlas') < text.index('代码分析与结论')
+    assert text.index('malloc failed') < text.index('createAtlas') < text.index('直接原因：')
     assert 'map.c:10' in scene_text(scene)
     assert '0x7028cc08' in scene_text(scene)
 
@@ -68,6 +69,25 @@ def test_watchdog_without_stack_stays_a_scene_but_not_watchdog_init():
     assert len(scenes)==1 and scenes[0]['classification']=='watchdog'
     assert scenes[0]['addresses']==[]
     assert extract_scenes('watchdog init seconds = 200','2026.log','a')==[]
+
+
+def test_single_scene_proceeds_without_using_unmatched_or_ambiguous_dumps():
+    from jira_service.crash_scene import select_scene
+    scene={'id':'one','timestamp':'2026-11-13T16:15:46+08:00','firmware':'6.6.21.0',
+           'coredump':{'status':'decoded','registers':{'pc':'0x1234'}}}
+    dumps=[{'id':'old','metadata':{'original_path':'sram_dump_20260709111726.zip / sram_dump.bin'}}]
+    result=select_scene([scene],dumps,{})
+    assert result['scene_id']=='one'
+    assert scene['dump_association']['status']=='unverified'
+    assert scene['dump_association']['groups']==[]
+    assert scene['dump_association']['excluded_artifact_ids']==['old']
+    assert '不参与' in scene['dump_association']['limitation']
+    assert scene['coredump']['registers']['pc']=='0x1234'
+    dumps=[{'id':str(n),'metadata':{'original_path':f'sram_dump_202611131615{n}.zip / sram_dump.bin'}} for n in (47,48)]
+    assert select_scene([scene],dumps,{})['scene_id']=='one'
+    assert scene['dump_association']['status']=='ambiguous'
+    assert scene['dump_association']['excluded_artifact_ids']==['47','48']
+    assert select_scene([scene],dumps,{'firmware':'9.9.9'})['status']=='needs_selection'
 
 
 def test_compact_fault_comment_keeps_pc_mtval_and_limits_runtime_frames():
@@ -115,3 +135,19 @@ def test_compact_business_stack_does_not_promote_unverified_rtos_gpu_candidates(
     body=scene_text(sample,compact=True)
     assert 'updateTime ← expand ← handleTouch' in body
     assert 'xQueueSemaphoreTake' not in body and 'gpu_submit' not in body
+
+
+def test_compact_call_path_excludes_scan_noise_and_retains_callsite_evidence():
+    from jira_service.crash_scene import code_call_path
+    def frame(addr,name,dis=''):
+        return {'address':addr,'inline':[{'function':name,'file':'??','line':None}],'disassembly':dis}
+    s={'registers':{'ra':'0x204'},'frames':[
+        frame('0x100','encode'),frame('0x200','caller','200: 000000ef jal 100 <encode>'),
+        frame('0x300','printf','300: 000000ef jal 400 <other>'),
+        frame('0x500','outer','500: 000000ef jal 200 <caller>')]}
+    path=code_call_path(s)
+    assert path['functions']==['encode','caller','outer']
+    assert path['edges'][0]['saved_ra_matches_return']
+    s.update(code_call_path=path,raw_logs=[],filename='fixture.log')
+    text=scene_text(s,compact=True)
+    assert 'encode ← caller ← outer' in text and 'printf' not in text

@@ -40,9 +40,28 @@ def fault_access(scene):
     effective=(value+displacement)&0xffffffff
     mtval=logged.get('mtval');same=mtval is not None and effective==int(mtval,16)
     code_matched=frame.get('code_matched') is True
+    formation=None
+    instructions=[]
+    for line in frame.get('disassembly','').splitlines():
+        m=re.match(r'\s*([0-9a-fA-F]+):\s+([0-9a-fA-F]+)\s+(.+)',line)
+        if m:instructions.append((int(m[1],16),len(m[2])//2,m[3].split('#',1)[0].strip()))
+    before=next((x for x in instructions if x[0]+x[1]==int(pc,16)),None)
+    if before and displacement==0:
+        addition=re.fullmatch(r'(?:c\.)?add\s+(\w+),\s*(\w+)(?:,\s*(\w+))?',before[2])
+        if addition:
+            dest,left,right=addition.groups();right=right or left;left=left if addition[3] else dest
+            dest,left,right=(aliases.get(x,x) for x in (dest,left,right))
+            other=right if left==dest else left if right==dest else None
+            if dest==base and other and other!=dest and other!='sp' and other in regs:
+                other_value=int(regs[other],16);prior=(value-other_value)&0xffffffff
+                formation={'instruction':before[2],'address':hex(before[0]),'other_register':other,
+                           'other_value':hex(other_value),'base_before_add':hex(prior),
+                           'equation':f'{hex(other_value)} + {hex(prior)} = {hex(value)} (RV32)',
+                           'limitation':'按目标ELF紧邻前一条add和保存寄存器反推；不是已捕获的输入轨迹，源码变量及构建一致性需另证。'}
     return {'status':'address_consistent' if same else 'address_conflict' if mtval is not None else 'calculated',
             'pc':hex(int(pc,16)),'instruction':instruction,'operation':'load' if opcode.startswith('l') else 'store',
             'width_bytes':{'b':1,'h':2,'w':4}[opcode[1]],'base_register':base,'base_value':hex(value),
             'offset':displacement,'effective_address':hex(effective),'observed_fault_address':mtval,
             'null_base':value==0,'device_code_matched':code_matched,
+            'address_formation':formation,
             'note':'仅核对保存现场的寄存器与指令地址计算；'+('该PC代码字节已与dump匹配' if code_matched else '该PC代码字节尚未与dump匹配，指令解释仍有构建限制')+'；不证明对象失效的生命周期根因'}

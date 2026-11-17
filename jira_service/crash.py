@@ -110,6 +110,20 @@ def prepare_crash(settings, store, key, run_id, inventory=None):
             frame['code_matched']=any(m['match'] and m['start']<=address<m['end'] for m in matches)
         from .fault_access import fault_access
         scene['fault_access']=fault_access(scene)
+        formation=scene['fault_access'].get('address_formation')
+        if formation:
+            with elf.open('rb') as stream:
+                symbols=ELFFile(stream).get_section_by_name('.symtab')
+                objects=[sym for sym in symbols.iter_symbols() if sym['st_info']['type']=='STT_OBJECT'
+                         and sym['st_value']==int(formation['other_value'],16) and sym['st_size']>0] if symbols else []
+                if len(objects)==1:
+                    symbol=objects[0]
+                    formation.update(elf_base_object=symbol.name,elf_object_bytes=symbol['st_size'],
+                                     byte_offset_outside_object=int(formation['base_before_add'],16)>=symbol['st_size'])
+        from .crash_scene import code_call_path
+        scene['code_call_path']=code_call_path(scene)
+        if scene['code_call_path']['edges']:
+            findings.insert(0,'代码调用关系核对：'+json.dumps(scene['code_call_path'],ensure_ascii=False))
         if scene['fault_access']['status'] not in ('unsupported','not_access_fault'):
             findings.insert(0,'故障访存核对：'+json.dumps(scene['fault_access'],ensure_ascii=False))
     findings.append('分析边界：调用栈来自同一 last crash 区段的设备回溯地址，已按 ELF 符号和 manifest 源码解析；设备可能通过栈扫描生成列表，个别候选帧需结合源码调用关系判断，不可把正常电源 backtrace 或后续启动的断言并入此现场。未实现全部线程遍历。')

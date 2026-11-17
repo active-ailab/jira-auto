@@ -10,7 +10,7 @@ import time
 from urllib.error import HTTPError,URLError
 from http.client import HTTPException
 from urllib.parse import urlencode,urlparse,unquote
-from urllib.request import Request,build_opener,HTTPRedirectHandler
+from urllib.request import Request,build_opener,HTTPRedirectHandler,ProxyHandler
 import zipfile
 from .materials import sha256
 from .store import now
@@ -19,7 +19,10 @@ from .store import now
 STORAGE_HOSTS={'zepp-us3-1311088246.cos.na-ashburn.myqcloud.com','zepp-cn3-1311088246.cos.ap-guangzhou.myqcloud.com'}
 # Path-style S3 endpoints serve many unrelated tenants: approve the bucket too.
 # Observed in the authenticated quality-platform download response, not user text.
-S3_PATH_BUCKETS={'s3.eu-central-1.amazonaws.com':{'huami-de'}}
+S3_PATH_BUCKETS={
+    's3.eu-central-1.amazonaws.com':{'huami-de'},
+    's3.us-west-2.amazonaws.com':{'huami-us2'},
+}
 API='https://api.zepp.top'
 AUTH='https://open.zepp.top/auth'
 
@@ -33,7 +36,11 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def response(url,headers=None):
-    try:return build_opener(NoRedirect).open(Request(url,headers=headers or {}),timeout=45)
+    # Optional storage-only proxy; authenticated platform API calls retain their route.
+    handlers=[NoRedirect]
+    proxy=os.getenv('JA_QUALITY_PROXY','').strip()
+    if proxy and not headers:handlers.append(ProxyHandler({'https':proxy}))
+    try:return build_opener(*handlers).open(Request(url,headers=headers or {}),timeout=45)
     except HTTPError as exc:
         if exc.code in (401,403) and headers and headers.get('Authorization'):raise QualityError('auth_required','质量平台登录已失效，请在接入与配置重新连接') from None
         raise QualityError('network_error','质量平台请求失败（HTTP '+str(exc.code)+'）') from None

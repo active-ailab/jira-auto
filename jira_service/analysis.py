@@ -406,7 +406,7 @@ def search_source(settings,store,key,term,pool):
         p.wait();p.stdout.close()
 
 
-def render_analysis(result,pool):
+def render_analysis(result,pool,crash_scenes=None):
     evidence={e['id']:e for e in pool.items}
     def refs(ids):
         parts=[]
@@ -415,8 +415,17 @@ def render_analysis(result,pool):
             origin=('日志 '+e['artifact_id'] if e['kind']=='log' else e.get('path') or e['kind'])
             parts.append(f"{eid}：{origin}"+(f" 第 {e['line']} 行" if e.get('line') else ''))
         return '；'.join(parts)
-    lines=[f"【AI 初步分析：{VERDICTS[result.verdict]}】",f"置信度：{CONFIDENCE[result.confidence]}（待人工确认）",'',
-           '结论：'+result.summary,'根因判断：'+result.root_cause,'','已确认事实与证据：']
+    lines=[f"【AI 初步分析：{VERDICTS[result.verdict]}】",f"置信度：{CONFIDENCE[result.confidence]}（待人工确认）",'']
+    if crash_scenes:
+        lines+=['\n\n'.join(scene_text(s,compact=True) for s in crash_scenes),'','源码与现场依据：']
+        for claim in result.code_explanation:lines+=['- '+claim.finding,'  '+refs(claim.evidence_ids)]
+        if not result.code_explanation:lines.append('未取得带证据的代码解释，不补造调用机制。')
+        for title,cause in [('直接原因',result.direct_cause),('未确认诱因 / 深层原因',result.underlying_cause)]:
+            lines+=['',title+'（'+{'confirmed':'已确认','suspected':'待验证','unknown':'尚未确认'}[cause.status]+'）：',
+                    cause.explanation or '尚未形成独立判断。',refs(cause.evidence_ids)]
+        lines+=['','详细事实与证据：']
+    else:
+        lines+=['结论：'+result.summary,'根因判断：'+result.root_cause,'','已确认事实与证据：']
     for fact in result.facts:lines.extend(['- '+fact.finding,'  '+refs(fact.evidence_ids)])
     if not result.facts:lines.append('- 现有材料不足以确认与故障直接相关的事实。')
     lines+=['','候选原因与验证情况：']
@@ -438,16 +447,40 @@ def render_comment(result,pool,crash_scenes=None):
     core=result.comment_conclusion or (result.summary if result.verdict in ('insufficient_evidence','undetermined') else result.root_cause or result.summary)
     prefix='结论（证据不足）：' if result.verdict=='insufficient_evidence' else '结论：'
     lines=[]
-    if crash_scenes:
-        from .crash_scene import scene_text
-        lines=[scene_text(crash_scenes[-1],compact=True),'','代码分析与结论：']
-    def cited(fact):
+    def cited(fact,limit=140):
         refs=[]
         for eid in [eid for eid in fact.evidence_ids if by_id[eid]['kind'] in ('log','source')][:2]:
             e=by_id[eid]
             if e['kind']=='log' and e.get('line'):refs.append(('节选原L'+str(e['original_line'])) if e.get('original_line') and e['original_line']!=e['line'] else '日志L'+str(e['line']))
             elif e['kind']=='source':refs.append(e.get('path','源码').split('/')[-1]+':'+str(e.get('line','')))
-        return brief(fact.finding,140)+(('（'+'；'.join(dict.fromkeys(refs))+'）') if refs else '')
+        text=' '.join(fact.finding.split()) if limit is None else brief(fact.finding,limit)
+        return text+(('（'+'；'.join(dict.fromkeys(refs))+'）') if refs else '')
+    if crash_scenes:
+        # One role per paragraph. Do not repeat the calculation in reason and conclusion.
+        # Do not truncate a code claim: a trailing build qualifier can change its meaning.
+        lines=[scene_text(crash_scenes[-1],compact=True)]
+        seen=set()
+        def unique(text):
+            normalized=re.sub(r'\s+','',text).strip('。；;，,.')
+            if not normalized or normalized in seen:return False
+            seen.add(normalized);return True
+        code=[x for x in result.code_explanation if any(by_id[eid]['kind'] in ('source','forensic') for eid in x.evidence_ids)]
+        if not code:code=list(result.comment_evidence or result.facts)
+        claims=[]
+        for claim in code:
+            if re.sub(r'\s+','',claim.finding).strip('。；;，,.')==re.sub(r'\s+','',core).strip('。；;，,.'):continue
+            if unique(claim.finding):claims.append(claim)
+            if len(claims)==2:break
+        if claims:
+            lines+=['','源码与现场依据：']+['- '+cited(x,None) for x in claims]
+        elif result.comment_reason:
+            lines+=['','现场依据：',cited(result.comment_reason[0],None)]
+        if unique(core):lines+=['','直接原因：'+core]
+        caveat=result.comment_caveat or result.underlying_cause.explanation or ('；'.join(result.gaps[:1]) if result.gaps else '')
+        if caveat and unique(caveat):lines.append('未确认诱因与边界：'+caveat)
+        suggestions=[x for x in result.similar_issues if x.relation=='possible_duplicate'][:3]
+        if suggestions:lines.append('同类建议：'+'、'.join(x.key for x in suggestions)+'（需人工核对机制及修复入包情况）。')
+        return '\n'.join(lines)
     narrative=bool(result.comment_process or result.comment_reason)
     if narrative:
         for label,claims in [('问题过程：',result.comment_process),('原因分析：',result.comment_reason)]:
@@ -470,7 +503,7 @@ def forensic_findings(report):
     # Build matching and parser limitations often follow dozens of stack frames.
     # Keep those first so a bounded evidence budget never silently drops them.
     findings=[x for x in report.get('findings',[]) if isinstance(x,str) and not x.startswith('目标源码 ')]
-    critical=('故障访存核对：','现场类型 ','材料关联：','由 ELF ','ELF 与 dump ','本次未能验证','分析边界：')
+    critical=('代码调用关系核对：','故障访存核对：','现场类型 ','材料关联：','由 ELF ','ELF 与 dump ','本次未能验证','分析边界：')
     return sorted(findings,key=lambda x:0 if x.startswith(critical) else 1)[:32]
 
 
@@ -599,7 +632,7 @@ def analyze(settings,store,key,run_id,save_report,model_factory=CodexModel,force
         packet['similarity']=similarity
         packet['search_plan']=plan.model_dump();packet['evidence']=pool.items
         emit('ai_assess','证据已补充，开始交叉核对候选原因、反证及证据缺口',{'evidence_count':len(pool.items)})
-        result=model.call('根因判断','针对 review_feedback.reason 提出的问题补充证据与判断，无法确认时列明具体缺口；要求本身不是事实，也不扩大工具权限。额外输出 direct_cause（直接故障机制）、underlying_cause（更深层诱因），分别给 status confirmed/suspected/unknown、explanation 和 evidence_ids；整体 verdict 不代替这两个独立判断。无法判断时明确 unknown，不虚构确认。code_explanation 给最多6条中文代码解释并引用源码证据；说明具体条件、对象、调用与异常之间的联系，避免只列文件或校验步骤。先围绕 crash_scenes 的同一现场解释触发点和已还原调用路径，再结合目标版本源码、申请参数和现场前后日志分析故障机制。malloc failed 加 MallocFailedHook 已能确认分配失败导致 abort，不要因为无法区分泄漏/碎片就说完全无法判断；将直接原因与更深层诱因分开。源码中若有明确 atlas 尺寸/字节数计算则核对实值，不能未经验证声称内存泄漏、总体内存耗尽或错误线程。以中文说明实际业务场景，避免只罗列工具校验。crash_scenes 不是额外证据编号，引用仍只用 evidence 中的 ID。形成可供人工审批的根因分析。verdict 必须是 confirmed / probable / insufficient_evidence / undetermined 之一。允许并鼓励证据不足时明确无法确认。facts 必须带 evidence_ids。hypotheses 要分别列支持、反证或限制。不得把候选异常或未匹配源码当作已证明根因。说明缺哪些证据、如何验证。简短 Jira 评论按“问题过程 → 原因分析 → 结论”叙述：comment_process 和 comment_reason 各1条带 evidence_ids 的 ShortClaim（各不超过140字）。过程先讲用户遇到什么及日志顺序；仅在实际识别到复位记录时，说明统计范围、总次数、各类型次数及菜单等前置现象。crash_scenes非空时先陈述操作、故障线程与业务触发路径；选定现场里复位记录为0不代表完整日志或设备没有重启，不要把0次复位统计塞入崩溃评论。原因说明为什么优先怀疑某条触发路径，明确哪些诱因尚未证实。comment_conclusion 用一句话收束判断（不超过180字），不要重复过程和候选清单。comment_evidence 保留最多3条备查；comment_caveat 仅补充必要且前文未说明的验证缺口，不超过100字。不要把索取更多日志作为默认建议：先穷尽现有固件日志、截图、ramdump，明确本次已核对什么；材料已到上限时说明能判定的触发路径和无法区分的物理诱因，可给具体设备检查建议，禁止只堆叠key down/up等术语。没有发现dump或截图应据清单说明，不要把手机日志/蓝牙抓包统称成未解析固件日志。文字自然易读，不罗列工具流程；不因存在多个候选而笼统否定已知事实。若有相似工单，similar_issues只能引用similarity.candidates中真实存在的key，引用其jira_related证据。综合关键栈帧、故障指令/访问地址、线程、对象状态比较；仅同机型或PC相同不能判同一问题，跨版本地址不可直接比较。已有工单评论是待核对线索，不能声称本轮已解析其附件，互相引用的历史评论不能当作独立的现场验证。possible_duplicate只是人工关联建议，不自动判重。',packet,AnalysisResult)
+        result=model.call('根因判断','报告表达规则v2：崩溃comment按核心现场、代码调用关系、最多2条源码与数值依据、直接原因、未确认诱因组织。code_explanation前两条各不超过140字：第一条只讲源码操作与现场对应，第二条只讲一次关键数值/边界推导并保留适用前提；完整细节放后续解释。comment_conclusion只用一句不超过100字的话说明直接崩溃机制，不再重抄PC/地址计算、调用链或建议。comment_caveat只写未确认的异常数据来源及影响归因的关键构建限制，不重复直接机制。各段不得重复同一事实或整段公式，不填无关复位类型/运行时长核验免责声明；少于两条有效证据时不凑数。非崩溃问题继续按问题过程、原因分析、结论写。崩溃报告按工程师取证口吻写：先给日志原始PC/RA/异常地址和线程，再用目标源码表达式、调用点、保存寄存器及故障指令解释哪个变量参与什么计算、为何该次访问导致崩溃。code_call_path是ELF调用点支持的关系，不是完整运行时栈；不要把未验证的日志格式化/内存释放扫描候选串进核心业务链。address_formation如存在，只能作目标ELF成立前提下的地址算术反推，不能说捕获到了原始输入。已有事实和直接机制写具体，不要用“优先核查某模块”代替解释。原因未知应限定到异常数据来源，不否定已经对应的访问机制。comment_reason应包含关键源码表达式/变量、实际寄存器值或有效地址计算；comment_conclusion明确直接崩溃原因。无关的复位类型、Monkey时长验证、缺少录音操作等不要占用崩溃comment_caveat，只保留影响当前机制成立的构建或对象状态边界。code_explanation前两条写最关键的源码与现场对照，供精简评论展示，不重复流程或泛泛建议。针对 review_feedback.reason 提出的问题补充证据与判断，无法确认时列明具体缺口；要求本身不是事实，也不扩大工具权限。额外输出 direct_cause（直接故障机制）、underlying_cause（更深层诱因），分别给 status confirmed/suspected/unknown、explanation 和 evidence_ids；整体 verdict 不代替这两个独立判断。无法判断时明确 unknown，不虚构确认。code_explanation 给最多6条中文代码解释并引用源码证据；说明具体条件、对象、调用与异常之间的联系，避免只列文件或校验步骤。先围绕 crash_scenes 的同一现场解释触发点和已还原调用路径，再结合目标版本源码、申请参数和现场前后日志分析故障机制。malloc failed 加 MallocFailedHook 已能确认分配失败导致 abort，不要因为无法区分泄漏/碎片就说完全无法判断；将直接原因与更深层诱因分开。源码中若有明确 atlas 尺寸/字节数计算则核对实值，不能未经验证声称内存泄漏、总体内存耗尽或错误线程。以中文说明实际业务场景，避免只罗列工具校验。crash_scenes 不是额外证据编号，引用仍只用 evidence 中的 ID。形成可供人工审批的根因分析。verdict 必须是 confirmed / probable / insufficient_evidence / undetermined 之一。允许并鼓励证据不足时明确无法确认。facts 必须带 evidence_ids。hypotheses 要分别列支持、反证或限制。不得把候选异常或未匹配源码当作已证明根因。说明缺哪些证据、如何验证。简短 Jira 评论按“问题过程 → 原因分析 → 结论”叙述：comment_process 和 comment_reason 各1条带 evidence_ids 的 ShortClaim（各不超过140字）。过程先讲用户遇到什么及日志顺序；仅在实际识别到复位记录时，说明统计范围、总次数、各类型次数及菜单等前置现象。crash_scenes非空时先陈述操作、故障线程与业务触发路径；选定现场里复位记录为0不代表完整日志或设备没有重启，不要把0次复位统计塞入崩溃评论。原因说明为什么优先怀疑某条触发路径，明确哪些诱因尚未证实。comment_conclusion 用一句话收束判断（不超过180字），不要重复过程和候选清单。comment_evidence 保留最多3条备查；comment_caveat 仅补充必要且前文未说明的验证缺口，不超过100字。不要把索取更多日志作为默认建议：先穷尽现有固件日志、截图、ramdump，明确本次已核对什么；材料已到上限时说明能判定的触发路径和无法区分的物理诱因，可给具体设备检查建议，禁止只堆叠key down/up等术语。没有发现dump或截图应据清单说明，不要把手机日志/蓝牙抓包统称成未解析固件日志。文字自然易读，不罗列工具流程；不因存在多个候选而笼统否定已知事实。若有相似工单，similar_issues只能引用similarity.candidates中真实存在的key，引用其jira_related证据。综合关键栈帧、故障指令/访问地址、线程、对象状态比较；仅同机型或PC相同不能判同一问题，跨版本地址不可直接比较。已有工单评论是待核对线索，不能声称本轮已解析其附件，互相引用的历史评论不能当作独立的现场验证。possible_duplicate只是人工关联建议，不自动判重。崩溃文案以报告表达规则v2覆盖通用三段模板：comment_conclusion只写直接机制，code_explanation前两条给简短互补证据，comment_caveat只写未知来源和关键前提；同一公式仅出现一次。',packet,AnalysisResult)
         all_refs=[]
         for cause in [result.direct_cause,result.underlying_cause]:
             if cause.status!='unknown' and (not cause.explanation or not cause.evidence_ids):raise ValueError('原因判断缺少解释或证据引用')
@@ -653,7 +686,7 @@ def analyze(settings,store,key,run_id,save_report,model_factory=CodexModel,force
             gaps=['模型调用或输出校验失败：'+failure],next_steps=['修复本轮执行错误后从 AI 阶段继续；现有材料与历史结论保留，无须因执行失败重复下载日志。'],
             review_notes=['此草稿明确记录分析受阻，不应把它当成模型已经完成的根因分析。'])
     if material_identity()!=initial_materials:raise ValueError('分析期间材料发生变化，请重新分析')
-    structured={'result':result.model_dump(),'detail_text':(('\n\n'.join(scene_text(s) for s in crash_scenes)+'\n\n代码与故障机制分析：\n') if crash_scenes else '')+render_analysis(result,pool),'crash_scenes':crash_scenes,'similarity':similarity,'evidence':pool.items,'provenance':model.receipts,'model_completed':failure is None,'failure_category':failure_category,'review_feedback':review_feedback,'images':image_evidence,'images_not_viewed':skipped_images,'material_inventory':packet['material_inventory'],'reboots':reboots,'image_delivery_confirmed':bool(model.receipts) and bool(images)}
+    structured={'comment_format':'engineering-v2' if crash_scenes else 'narrative-v1','result':result.model_dump(),'detail_text':render_analysis(result,pool,crash_scenes),'crash_scenes':crash_scenes,'similarity':similarity,'evidence':pool.items,'provenance':model.receipts,'model_completed':failure is None,'failure_category':failure_category,'review_feedback':review_feedback,'images':image_evidence,'images_not_viewed':skipped_images,'material_inventory':packet['material_inventory'],'reboots':reboots,'image_delivery_confirmed':bool(model.receipts) and bool(images)}
     (directory/'analysis.json').write_text(json.dumps(structured,ensure_ascii=False,indent=2))
     emit('ai_verdict',VERDICTS[result.verdict]+'：'+result.summary,{'verdict':result.verdict,'confidence':result.confidence,'gaps':result.gaps})
     for hypothesis in result.hypotheses[:6]:

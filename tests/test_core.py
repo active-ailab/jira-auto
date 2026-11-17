@@ -38,6 +38,11 @@ def test_custom_description_and_feedback():
         issue_key("COLOGNE-9001;touch /tmp/oops")
 
 
+def test_summary_device_version_accepts_space_without_inventing_alias():
+    i=normalize({'key':'ABS-1','fields':{'summary':'【Col 6.6.21.0】【Monkey稳定性】死机'}})
+    assert i['device']=='Col' and i['firmware']=='6.6.21.0'
+
+
 def test_queue_deduplicates_and_survives_restart(service):
     a = service.store.enqueue("fetch", "COLOGNE-9001")
     assert service.store.enqueue("fetch", "COLOGNE-9001") == a

@@ -47,3 +47,16 @@ def test_valid_register_prefix_can_check_address_but_still_requires_matching_log
     assert result['status']=='address_consistent' and result['null_base']
     sample['coredump']['registers']['pc']='0x1234'
     assert fault_access(sample)['status']=='conflict'
+
+
+def test_adjacent_add_can_explain_address_but_not_claim_input_corruption():
+    s=scene('lbu a5,0(a5)',base='0x12345678',mtval='0x12345678')
+    s['coredump']['registers']['a4']='0x12340000'
+    s['frames'][0]['disassembly']='706b7acc: 97ba add a5,a5,a4\n706b7ace: 0007c783 lbu a5,0(a5)'
+    r=fault_access(s)
+    assert r['address_formation']['base_before_add']=='0x5678'
+    assert '不是已捕获' in r['address_formation']['limitation']
+    s['frames'][0]['disassembly']='706b7ac8: 97ba add a5,a5,a4\n706b7ace: 0007c783 lbu a5,0(a5)'
+    assert fault_access(s)['address_formation'] is None
+    s['frames'][0]['disassembly']='706b7acc: 97be add a5,a5,a5\n706b7ace: 0007c783 lbu a5,0(a5)'
+    assert fault_access(s)['address_formation'] is None

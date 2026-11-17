@@ -312,3 +312,32 @@ def test_evidence_dedup_preserves_source_revision_path_and_comment_identity():
     assert p.add('source','same code',path='ui/Two.c',line=10,revision='a'*40)!=first
     assert p.add('source','same code',path='ui/One.c',line=10,revision='b'*40)!=first
     assert p.add('jira_comment','same analysis',comment_id='one')!=p.add('jira_comment','same analysis',comment_id='two')
+
+
+def test_crash_comment_includes_bounded_cited_code_mechanism():
+    from jira_service.analysis import AnalysisResult,Claim,ShortClaim,EvidencePool,render_comment
+    pool=EvidencePool();ref=pool.add('source','table[index]',path='codec.c',line=56)
+    result=AnalysisResult(verdict='probable',confidence='medium',summary='非法读取',root_cause='非法读取',facts=[],hypotheses=[],gaps=[],next_steps=[],review_notes=[],
+        comment_process=[ShortClaim(finding='编码线程发生读取故障',evidence_ids=[ref])],
+        comment_reason=[ShortClaim(finding='索引参与地址计算后指向非法区域',evidence_ids=[ref])],
+        code_explanation=[Claim(finding='源码读取table[index]，保存寄存器对应有效地址超出表范围；来源仍未知',evidence_ids=[ref])])
+    text=render_comment(result,pool,[{'filename':'fw.log','raw_logs':[],'frames':[]}])
+    assert '源码与现场依据：' in text and 'table[index]' in text and 'codec.c:56' in text
+
+
+def test_crash_comment_calculation_once_and_qualifiers_are_not_truncated():
+    from jira_service.analysis import Claim,ShortClaim,EvidencePool,render_comment,render_analysis
+    pool=EvidencePool();ref=pool.add('source','table[index]',path='codec.c',line=56)
+    formula='基址0x1000 + 偏移0x3000 = 故障地址0x4000'
+    qualified='已核对目标源码表达式。'*25+'该解释仅在现场代码与目标ELF一致时成立。'
+    result=AnalysisResult(verdict='probable',confidence='medium',summary='summary should not duplicate crash explanation',root_cause='root should not duplicate summary',facts=[],hypotheses=[],gaps=[],next_steps=[],review_notes=[],
+        comment_reason=[ShortClaim(finding=formula,evidence_ids=[ref])],
+        comment_conclusion='编码线程查表越界导致非法读取。',comment_caveat='异常索引的来源尚未确认。',
+        code_explanation=[Claim(finding=formula,evidence_ids=[ref]),Claim(finding=formula,evidence_ids=[ref]),Claim(finding=qualified,evidence_ids=[ref])])
+    scene={'filename':'fw.log','raw_logs':[],'frames':[]}
+    body=render_comment(result,pool,[scene])
+    assert body.count(formula)==1 and qualified in body
+    assert body.index('现场核心日志')<body.index('源码与现场依据')<body.index('直接原因：')<body.index('未确认诱因与边界：')
+    full=render_analysis(result,pool,[scene])
+    assert 'summary should not duplicate' not in full and 'root should not duplicate' not in full
+    assert '直接原因（尚未确认）' in full

@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from .integrations import Jira, digest, fingerprint, issue_key, run_cli
 from .materials import fetch_artifacts, import_logs, inspect_manifest, prepare_report
 from .store import Store, now
+from .crash_scene import NeedsSceneSelection
 
 
 class Service:
@@ -191,6 +192,9 @@ class Service:
                 self.store.finish(rid, result=result, error=result.get('failure'))
                 self.store.event('failed' if result.get('failure') else 'complete',
                                  '分析执行失败；已保留错误记录，不可作为根因结论审批' if result.get('failure') else '任务完成',key,rid)
+            except NeedsSceneSelection as exc:
+                self.store.wait_for_selection(rid,exc.result)
+                self.store.event('scene_selection',str(exc),key,rid,exc.result)
             except Exception as exc:
                 if isinstance(exc, (ValueError, RuntimeError)):
                     message = str(exc)[:500]
@@ -204,7 +208,7 @@ class Service:
         rows=self.store.rows('SELECT * FROM runs WHERE id=?',(rid,))
         if not rows:raise ValueError('任务不存在')
         previous=rows[0]
-        if previous['status'] not in ('failed','interrupted'):raise ValueError('只有失败或中断任务可以续跑')
+        if previous['status'] not in ('failed','interrupted','needs_selection'):raise ValueError('只有失败、中断或等待现场选择的任务可以续跑')
         if previous['kind'] not in ('analysis','preflight'):raise ValueError('此任务不支持阶段续跑')
         if force_from and force_from not in STAGES:raise ValueError('无效的重跑阶段')
         payload=json.loads(previous['payload']);payload.update({'retry_of':rid})

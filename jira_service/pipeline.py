@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from .stages import StageRunner, artifact_files
-from .crash_scene import PARSER_VERSION
+from .crash_scene import PARSER_VERSION,NeedsSceneSelection
 from .materials import fetch_artifacts,build_device
 
 
@@ -31,7 +31,7 @@ def prepare(service,key,rid,payload,with_ai=True):
     selection=inventory['selection']
     if selection['status']=='needs_selection':
         store.event('scene_selection',selection['reason'],key,rid,{'scene_ids':[s['id'] for s in inventory['scenes']]})
-        raise ValueError(selection['reason'])
+        raise NeedsSceneSelection(selection,[s['id'] for s in inventory['scenes']])
     if selection['scene_id']:
         scene=next(s for s in inventory['scenes'] if s['id']==selection['scene_id'])
         version=scene.get('firmware') or issue.get('firmware');device=issue.get('device')

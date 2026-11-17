@@ -81,8 +81,10 @@ def test_unapproved_storage_url_never_requested(url):
 @pytest.mark.parametrize('url',[
     'https://s3.eu-central-1.amazonaws.com/huami-de/example.zip?signature=synthetic',
     'https://s3.eu-central-1.amazonaws.com:443/huami-de/log/example.zip',
+    'https://s3.us-west-2.amazonaws.com/huami-us2/example.zip?signature=synthetic',
+    'https://s3.us-west-2.amazonaws.com:443/huami-us2/log/example.zip',
 ])
-def test_authenticated_platform_europe_s3_bucket_is_supported(url):
+def test_authenticated_platform_s3_buckets_are_supported(url):
     q.validate_download_url(url)
 
 
@@ -100,8 +102,21 @@ def test_authenticated_platform_europe_s3_bucket_is_supported(url):
     'https://user:pass@s3.eu-central-1.amazonaws.com/huami-de/example.zip',
     'https://s3.eu-central-1.amazonaws.com:8080/huami-de/example.zip',
 ])
-def test_s3_approval_does_not_allow_other_buckets_or_ambiguous_paths(url):
+@pytest.mark.parametrize('host,bucket',[
+    ('s3.eu-central-1.amazonaws.com','huami-de'),
+    ('s3.us-west-2.amazonaws.com','huami-us2'),
+])
+def test_s3_approval_does_not_allow_other_buckets_or_ambiguous_paths(url,host,bucket):
+    url=url.replace('s3.eu-central-1.amazonaws.com',host).replace('huami-de',bucket)
     with pytest.raises(q.QualityError):q.validate_download_url(url)
+
+
+@pytest.mark.parametrize('host,bucket',[
+    ('s3.eu-central-1.amazonaws.com','huami-us2'),
+    ('s3.us-west-2.amazonaws.com','huami-de'),
+])
+def test_s3_buckets_are_scoped_to_verified_region(host,bucket):
+    with pytest.raises(q.QualityError):q.validate_download_url(f'https://{host}/{bucket}/example.zip')
 
 
 def test_mixed_storage_list_is_rejected_before_any_download(tmp_path,monkeypatch):
@@ -116,9 +131,13 @@ def test_mixed_storage_list_is_rejected_before_any_download(tmp_path,monkeypatch
     assert 'do-not-log' not in str(exc.value)
 
 
-def test_europe_storage_download_never_receives_sso_credentials(tmp_path,monkeypatch):
+@pytest.mark.parametrize('host,bucket',[
+    ('s3.eu-central-1.amazonaws.com','huami-de'),
+    ('s3.us-west-2.amazonaws.com','huami-us2'),
+])
+def test_s3_storage_download_never_receives_sso_credentials(tmp_path,monkeypatch,host,bucket):
     s=service(tmp_path);calls=[]
-    monkeypatch.setattr(q,'feedback_files',lambda *a:([{'filename':'device.zip','url':'https://s3.eu-central-1.amazonaws.com/huami-de/test.zip','role':'url'}],{'files':1}))
+    monkeypatch.setattr(q,'feedback_files',lambda *a:([{'filename':'device.zip','url':f'https://{host}/{bucket}/test.zip','role':'url'}],{'files':1}))
     def download(url,headers=None):
         assert headers is None
         calls.append(url)
@@ -126,6 +145,23 @@ def test_europe_storage_download_never_receives_sso_credentials(tmp_path,monkeyp
     monkeypatch.setattr(q,'response',download)
     result=q.collect(s,'ABS-1','run',archive_only=True)
     assert result['state']=='downloaded' and len(calls)==1
+
+
+def test_quality_proxy_only_routes_storage_and_preserves_no_redirect(monkeypatch):
+    monkeypatch.setenv('JA_QUALITY_PROXY','http://127.0.0.1:7890')
+    seen=[]
+    class Opener:
+        def open(self,request,timeout):return request
+    def build(*handlers):
+        seen.append(handlers);return Opener()
+    monkeypatch.setattr(q,'build_opener',build)
+    storage=q.response('https://s3.us-west-2.amazonaws.com/huami-us2/test.zip')
+    api=q.response(q.API+'/api/feedback/list',{'Authorization':'synthetic'})
+    assert seen[0][0] is q.NoRedirect and seen[1][0] is q.NoRedirect
+    assert len(seen[0])==2 and seen[0][1].proxies=={'https':'http://127.0.0.1:7890'}
+    assert len(seen[1])==1
+    assert storage.get_header('Authorization') is None
+    assert api.get_header('Authorization')=='synthetic'
 
 
 class Download(io.BytesIO):

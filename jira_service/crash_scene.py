@@ -9,8 +9,14 @@ from pathlib import Path, PurePosixPath
 from .integrations import run_cli
 from .coredump import decode_coredump
 
-PARSER_VERSION='scenes-6-nested-dump-time'
+PARSER_VERSION='scenes-8-ci-source-and-call-evidence'
 TZ=timezone(timedelta(hours=8))
+
+
+class NeedsSceneSelection(RuntimeError):
+    def __init__(self,selection,scene_ids):
+        super().__init__(selection['reason'])
+        self.result={'selection':selection,'scene_ids':scene_ids}
 CORE=re.compile(r'malloc failed|ERROR!!!|Assert on thread|Fault on thread|Firmware name:|\b(?:RA|PC|MTVAL|MEPC|MCAUSE|SP|LR|CFSR|HFSR|BFAR|MMFAR)\s*[:=]?\s*0x|run:\s*addr2line|call\s*stack:|backtrace:|watchdog.*(?:timeout|expired|trigger)|\bHardFault\b|\bpanic\b',re.I)
 BOOT=re.compile(r'Welcome to HuamiOS|RAMDUMP\s+sys_init.*vfs register|SYS_INIT.*reset reason\s*\{',re.I)
 
@@ -117,7 +123,11 @@ def select_scene(scenes, dumps, issue, selected_id=None):
         if scene.get('timestamp'):
             stamp=datetime.fromisoformat(scene['timestamp'])
             matching=[{'timestamp':t,'artifact_ids':ids} for t,ids in groups.items() if 0<=(datetime.fromisoformat(t)-stamp).total_seconds()<=180]
-        scene['dump_association']={'status':'matched' if len(matching)==1 else 'ambiguous' if matching else 'unverified','groups':matching}
+        matched_ids={aid for g in matching for aid in g['artifact_ids']} if len(matching)==1 else set()
+        excluded=[d['id'] for d in dumps if d['id'] not in matched_ids]
+        scene['dump_association']={'status':'matched' if len(matching)==1 else 'ambiguous' if matching else 'unverified','groups':matching,
+            'excluded_artifact_ids':excluded,
+            'limitation':('有 '+str(len(excluded))+' 个独立dump文件未能唯一关联本现场，不参与本轮内存/代码字节比较；日志内嵌coredump仍按自身解析结果使用。') if excluded else ''}
         scene['version_match']='matched' if scene.get('firmware') and scene['firmware']==issue.get('firmware') else 'conflict' if scene.get('firmware') and issue.get('firmware') else 'unverified'
     if selected_id:
         selected=next((s for s in scenes if s['id']==selected_id),None)
@@ -125,10 +135,11 @@ def select_scene(scenes, dumps, issue, selected_id=None):
         return {'status':'selected','scene_id':selected_id,'reason':'用户明确选择；时间/版本限制仍保留'}
     eligible=[s for s in scenes if s['dump_association']['status']=='matched' and s['version_match']!='conflict']
     if len(eligible)==1:return {'status':'selected','scene_id':eligible[0]['id'],'reason':'唯一现场与dump文件时间对应（180秒窗口）；随后仍需代码字节校验'}
-    if not dumps and len(scenes)==1 and scenes[0]['version_match']!='conflict':
-        return {'status':'selected','scene_id':scenes[0]['id'],'reason':'仅一个现场，无dump；按日志分析并保留构建校验限制'}
+    if len(scenes)==1 and scenes[0]['version_match']!='conflict':
+        return {'status':'selected','scene_id':scenes[0]['id'],'reason':'仅一个明确现场，按其日志及内嵌coredump继续分析；未唯一匹配的独立dump不参与本轮取证，保留构建校验限制'}
     if not scenes:return {'status':'no_scene','scene_id':None,'reason':'未识别到支持格式的致命现场；不能把普通告警当作崩溃'}
-    return {'status':'needs_selection','scene_id':None,'reason':'多个现场或缺少唯一的dump时间关联，请在看板选择现场'}
+    reason='现场版本与工单版本冲突，请核对后选择现场' if len(scenes)==1 else '存在多个崩溃现场且无法唯一选择，请在看板选择本轮现场'
+    return {'status':'needs_selection','scene_id':None,'reason':reason}
 
 
 def tool_prefix(elf):
@@ -160,7 +171,7 @@ def symbolize(elf, addresses):
 
 def source_relative(filename):
     normal=posixpath.normpath(filename)
-    match=re.search(r'/(?:HuamiOS_multi_platform|HuamiOS_HS3(?:@\d+)?)/(.+)$',normal)
+    match=re.search(r'/(?:HuamiOS_multi_platform|HuamiOS_HS3)(?:@\d+)?/(.+)$',normal)
     if not match:return None
     relative=match[1]
     if PurePosixPath(relative).is_absolute() or '..' in PurePosixPath(relative).parts:return None
@@ -214,6 +225,11 @@ def scene_text(scene, compact=False):
     lines+=['','关键回溯（故障点 ← 调用方；…表示省略帧）：' if compact else '调用栈解析（设备回溯原序；内联函数标为 /）：']
     frames=scene.get('frames',[])
     if compact:
+        links=scene.get('code_call_path',{})
+        if links.get('functions'):
+            lines[-1]='代码调用关系（ELF调用点支持，故障点 ← 调用方）：'
+            lines.append(' ← '.join(links['functions']))
+            return '\n'.join(lines)
         functions=[];business=[]
         for frame in frames:
             for loc in frame['inline']:
@@ -243,3 +259,24 @@ def scene_text(scene, compact=False):
         lines.append('#'+str(frame['index'])+' '+frame['address']+' '+' / '.join(locations))
     if not frames:lines.append('未取得符号解析结果；保留上方原始地址，不补造函数。')
     return '\n'.join(lines)
+
+
+def code_call_path(scene):
+    """Keep ELF-supported call edges separate from unverified stack-scan candidates."""
+    frames=scene.get('frames',[])
+    if not frames:return {'functions':[],'edges':[]}
+    child=frames[0];names=list(dict.fromkeys(x['function'] for x in child['inline'] if x['function']!='??'))
+    edges=[]
+    for caller in frames[1:]:
+        child_names={x['function'] for x in child['inline']}
+        caller_names=list(dict.fromkeys(x['function'] for x in caller['inline'] if x['function']!='??'))
+        if not caller_names or child_names.intersection(caller_names):continue
+        for line in caller.get('disassembly','').splitlines():
+            m=re.match(r'\s*([\da-fA-F]+):\s+[\da-fA-F]+\s+jal\s+(?:ra,\s*)?[\da-fA-F]+\s+<([^>+]+)>',line)
+            if not m or int(m[1],16)!=int(caller['address'],16) or m[2] not in child_names:continue
+            edges.append({'caller':caller_names[-1],'callee':m[2],'call_address':caller['address'],
+                          'saved_ra_matches_return':len(edges)==0 and int(scene.get('registers',{}).get('ra','0'),16)==int(m[1],16)+4})
+            names.extend(n for n in caller_names if n not in names);child=caller
+            break
+    return {'functions':names if edges else [],'edges':edges,
+            'limitation':'由目标ELF调用指令支持的关系；不是完整运行时栈，现场代码字节匹配状态另行保留。'}

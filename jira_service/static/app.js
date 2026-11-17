@@ -2,9 +2,9 @@ const $ = (s) => document.querySelector(s);
 const state = {issues: [], status: {}, focus: {}, view: 'overview', filter: 'all', jobFilter:'all', search: '', page: 1, detail: null, detailTab: 'materials', token: '', busy: false};
 const escapeHTML = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const E = escapeHTML;
-const labels = {quality_pending:'平台日志待就绪',unsupported_host:'日志区域待支持',invalid_response:'平台响应无效',feedback_missing:'未找到唯一反馈',too_large:'日志超过大小限制',invalid_feedback:'反馈标识无效',auth_required:'需连接账号',listing:'查询日志清单',downloading:'下载日志',downloaded:'下载完成',inspecting:'检查包内文件',archiving:'归档到Jira',archived:'已归档Jira',archive_pending:'等待附件核对',archive_failed:'归档未完成',network_error:'采集网络异常',no_logs:'平台未提供日志',analysis_failed:'分析执行失败',preflight:'预检完成 · 待分析',unconfigured:'待配置',pairing:'待绑定',queued:'排队中',running:'执行中',completed:'已完成',failed:'失败',interrupted:'已中断',cancelled:'已取消',draft:'待审阅',rejected:'已退回',approved:'已批准',stale:'已过期',superseded:'旧版本',published:'已发布',publishing:'发布中',publication_unknown:'发布结果待核对',ready:'可用',manual:'浏览器下载 → ZIP 导入',pending:'待接入',plugin:'插件可用',verify:'只读校验',missing:'未安装'};
+const labels = {quality_pending:'平台日志待就绪',unsupported_host:'日志区域待支持',invalid_response:'平台响应无效',feedback_missing:'未找到唯一反馈',too_large:'日志超过大小限制',invalid_feedback:'反馈标识无效',auth_required:'需连接账号',listing:'查询日志清单',downloading:'下载日志',downloaded:'下载完成',inspecting:'检查包内文件',archiving:'归档到Jira',archived:'已归档Jira',archive_pending:'等待附件核对',archive_failed:'归档未完成',network_error:'采集网络异常',no_logs:'平台未提供日志',analysis_failed:'分析执行失败',preflight:'预检完成 · 待分析',unconfigured:'待配置',pairing:'待绑定',queued:'排队中',running:'执行中',completed:'已完成',needs_selection:'等待选择现场',failed:'失败',interrupted:'已中断',cancelled:'已取消',draft:'待审阅',rejected:'已退回',approved:'已批准',stale:'已过期',superseded:'旧版本',published:'已发布',publishing:'发布中',publication_unknown:'发布结果待核对',ready:'可用',manual:'浏览器下载 → ZIP 导入',pending:'待接入',plugin:'插件可用',verify:'只读校验',missing:'未安装'};
 const jobNames = {sync:'Jira 同步',refresh:'刷新工单',fetch:'下载构建产物',import_logs:'导入日志',import_quality_logs:'质量日志归档与分析',preflight:'材料预处理',source_check:'源码提交核对',analysis:'AI 根因分析',preparation_check:'现场预处理验证'};
-const badge = (s) => `<span class="badge ${['completed','approved','published','ready'].includes(s)?'green':['failed','analysis_failed','stale','publication_unknown','missing'].includes(s)?'red':['running','queued','draft','pending','manual'].includes(s)?'orange':'blue'}">${E(labels[s] || s)}</span>`;
+const badge = (s) => `<span class="badge ${['completed','approved','published','ready'].includes(s)?'green':['failed','analysis_failed','stale','publication_unknown','missing'].includes(s)?'red':['running','queued','needs_selection','draft','pending','manual'].includes(s)?'orange':'blue'}">${E(labels[s] || s)}</span>`;
 const fmt = (v) => v ? new Date(v).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}) : '—';
 const size = n => n > 1048576 ? (n/1048576).toFixed(1)+' MB' : (n/1024).toFixed(1)+' KB';
 let runConnection=null,runTimer=null,activeRun=null,runSeen=new Set();
@@ -23,14 +23,14 @@ function renderRunState(run){
   $('#run-next').innerHTML='<button class="button secondary" id="cancel-queued-run">取消排队任务</button>';
   $('#cancel-queued-run').onclick=()=>safe(async()=>{await api('/runs/'+activeRun.id+'/cancel',{});await openRun(activeRun.id);await refresh();});
  }else if(!finished)$('#run-next').innerHTML='';
- if(finished){$('#run-progress').value=activeRun.status==='completed'?100:0;$('#run-current').textContent=labels[activeRun.status]||activeRun.status;}
+ if(finished){$('#run-progress').value=activeRun.status==='completed'?100:0;$('#run-current').textContent=activeRun.status==='needs_selection'?(activeRun.result?.selection?.reason||'请选择本轮现场后继续分析'):(labels[activeRun.status]||activeRun.status);}
  if(activeRun.result){$('#run-result').innerHTML=`<details><summary>查看任务结构化结果</summary><pre>${E(JSON.stringify(activeRun.result,null,2))}</pre></details>`;}
  if(finished&&activeRun.issue_key){
-  $('#run-next').innerHTML=`${activeRun.result?.next_run_id?'<button class="button primary" id="run-next-stage">继续查看下一阶段分析 →</button> ':''}<button class="button secondary" id="run-open-issue">打开工单材料与草稿 →</button>${['failed','interrupted'].includes(activeRun.status)&&['analysis','preflight'].includes(activeRun.kind)?'<button class="button primary" id="resume-run">从失败处继续</button><label>重新执行起点 <select id="restart-stage">'+Object.entries(stageNames).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')+'</select></label><button class="button secondary" id="restart-run">从所选阶段重跑</button>':''}`;
+  $('#run-next').innerHTML=`${activeRun.result?.next_run_id?'<button class="button primary" id="run-next-stage">继续查看下一阶段分析 →</button> ':''}<button class="button secondary" id="run-open-issue">${activeRun.status==='needs_selection'?'选择现场后继续 →':'打开工单材料与草稿 →'}</button>${['failed','interrupted'].includes(activeRun.status)&&['analysis','preflight'].includes(activeRun.kind)?'<button class="button primary" id="resume-run">从失败处继续</button><label>重新执行起点 <select id="restart-stage">'+Object.entries(stageNames).map(([k,v])=>'<option value="'+k+'">'+v+'</option>').join('')+'</select></label><button class="button secondary" id="restart-run">从所选阶段重跑</button>':''}`;
   if($('#resume-run'))$('#resume-run').onclick=()=>safe(async()=>{const r=await api('/runs/'+activeRun.id+'/retry',{});await openRun(r.run_id);});
   if($('#restart-run'))$('#restart-run').onclick=()=>safe(async()=>{const r=await api('/runs/'+activeRun.id+'/retry',{force_from:$('#restart-stage').value});await openRun(r.run_id);});
   if($('#run-next-stage'))$('#run-next-stage').onclick=()=>safe(()=>openRun(activeRun.result.next_run_id));
-  $('#run-open-issue').onclick=()=>safe(async()=>{const key=activeRun.issue_key;$('#run-dialog').close();state.detailTab='draft';await openDetail(key);});
+  $('#run-open-issue').onclick=()=>safe(async()=>{const key=activeRun.issue_key;$('#run-dialog').close();state.detailTab=activeRun.status==='needs_selection'?'materials':'draft';await openDetail(key);});
  }
 }
 function appendTrace(event){
@@ -64,7 +64,7 @@ async function openRun(rid){
  runConnection.addEventListener('snapshot',e=>{renderRunState(JSON.parse(e.data));$('#run-connection').textContent='● 已连接 · 事件实时更新并保存，可关闭后回看';});
  runConnection.addEventListener('trace',e=>appendTrace(JSON.parse(e.data)));
  runConnection.addEventListener('state',e=>renderRunState(JSON.parse(e.data)));
- runConnection.addEventListener('done',()=>{runConnection?.close();$('#run-connection').textContent='✓ 任务已结束 · 当前展示已保存的完整执行记录';updateElapsed();clearInterval(runTimer);safe(refresh);});
+ runConnection.addEventListener('done',()=>{runConnection?.close();$('#run-connection').textContent=activeRun.status==='needs_selection'?'⏸ 等待选择现场 · 已保存准备结果，选择后可继续':'任务已结束 · 当前展示已保存的完整执行记录';updateElapsed();clearInterval(runTimer);safe(refresh);});
  runConnection.onerror=()=>{$('#run-connection').textContent='连接暂时中断，正在自动重连；已保存事件会按游标续传。';};
 }
 $('#close-run').onclick=()=>$('#run-dialog').close();

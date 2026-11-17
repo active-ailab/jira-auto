@@ -162,7 +162,7 @@ def normalize(raw):
     kind = f.get("issuetype") or {}
     attachments = [{k: a.get(k) for k in ["id", "filename", "size", "mimeType", "created"]}
                    for a in f.get("attachment", [])]
-    summary_version=re.search(r"[【\[]([A-Za-z][A-Za-z0-9_]*?)-(\d+(?:\.\d+){2,4})[】\]]", summary)
+    summary_version=re.search(r"[【\[]([A-Za-z][A-Za-z0-9_]*?)(?:-|\s+)(\d+(?:\.\d+){2,4})[】\]]", summary)
     status = f.get("status") or {}
     assignee = f.get("assignee") or {}
     prior_notes,comment_window=prior_comment_notes(f.get('comment') or {})
